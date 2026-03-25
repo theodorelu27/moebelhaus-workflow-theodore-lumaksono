@@ -1,0 +1,65 @@
+version: "3.8"
+
+services:
+  n8n:
+    image: n8nio/n8n:latest
+    container_name: n8n
+    restart: unless-stopped
+    ports:
+      - "5678:5678"
+    environment:
+      - N8N_BASIC_AUTH_ACTIVE=true
+      - N8N_BASIC_AUTH_USER=admin
+      - N8N_BASIC_AUTH_PASSWORD=admin123
+      - N8N_HOST=localhost
+      - N8N_PORT=5678
+      - N8N_PROTOCOL=http
+      - WEBHOOK_URL=http://localhost:5678/
+      - GENERIC_TIMEZONE=Europe/Berlin
+    volumes:
+      - n8n_data:/home/node/.n8n
+      - ./files:/files
+    depends_on:
+      - ollama
+      - postgres
+      - pyannote
+
+  pyannote:
+    build: ./pyannote-service
+    container_name: pyannote
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - HF_TOKEN=[YOUR_HUGGINGFACE_TOKEN]
+    volumes:
+      - pyannote_models:/root/.cache/huggingface
+
+  ollama:
+    image: ollama/ollama:latest
+    container_name: ollama
+    restart: unless-stopped
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=moebel
+      - POSTGRES_PASSWORD=moebel123
+      - POSTGRES_DB=moebeldb
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./init.sql:/docker-entrypoint-initdb.d/init.sql
+
+volumes:
+  n8n_data:
+  ollama_data:
+  postgres_data:
+  pyannote_models:

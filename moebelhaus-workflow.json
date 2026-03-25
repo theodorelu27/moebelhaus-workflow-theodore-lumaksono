@@ -1,0 +1,341 @@
+{
+  "name": "Moebelhaus n8n Workflow",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "/moebelhaus-webhook",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -112,
+        192
+      ],
+      "id": "ddb1ff90-0cff-44b7-b27d-8e80c0caa208",
+      "name": "Webhook",
+      "webhookId": "e56f7ff1-bd5a-484b-b2bf-86921eaaf4f5"
+    },
+    {
+      "parameters": {
+        "options": {}
+      },
+      "type": "n8n-nodes-base.emailReadImap",
+      "typeVersion": 2.1,
+      "position": [
+        -160,
+        0
+      ],
+      "id": "f8115247-a23e-403e-bbf5-4bed35c88f99",
+      "name": "Email Trigger (IMAP)",
+      "credentials": {
+        "imap": {
+          "id": "QMdhfExQ1lostMdW",
+          "name": "IMAP account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "moebelhaus-audio",
+        "responseMode": "lastNode",
+        "responseData": "firstEntryBinary",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        -208,
+        -160
+      ],
+      "id": "2a68208b-4738-40a1-bb96-b12ee5d7615e",
+      "name": "Audio Upload",
+      "webhookId": "987aa5ae-1f51-409c-b2bb-dfa85268ad5d"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\nconst binaryData = $input.first().binary;\n\nlet channel = 'webhook';\nlet content = '';\nlet contact_name = 'Unknown';\n\nif (input.source === 'audio') {\n  channel = 'audio';\n  \n  // Whisper returns text nested in data field\n  let transcription = '';\n  if (typeof input.data === 'string') {\n    transcription = input.data;\n  } else if (input.text) {\n    transcription = input.text;\n  } else if (input.transcription) {\n    transcription = input.transcription;\n  }\n  content = transcription;\n\n  const nameMatch = transcription.match(/my name is ([\\w]+ [\\w]+)/i) ||\n                    transcription.match(/mein Name ist ([\\w]+ [\\w]+)/i) ||\n                    transcription.match(/I(?:'m| am) ([\\w]+ [\\w]+)/i) ||\n                    transcription.match(/this is ([\\w]+ [\\w]+)/i);\n  contact_name = nameMatch ? nameMatch[1] : 'Caller (unknown)';\n} else if (input.subject || input.from) {\n  channel = 'email';\n  content = input.text || input.html || '';\n  \n  // Try to extract name from From header e.g. \"Maria Fischer <maria@example.com>\"\n  const fromRaw = input.from?.text || input.from || '';\n  const nameMatch = fromRaw.match(/^\"?([^\"<]+)\"?\\s*</);\n  if (nameMatch) {\n    contact_name = nameMatch[1].trim();\n  } else {\n    // Fall back to email address if no name found\n    contact_name = fromRaw.replace(/<.*>/, '').trim() || fromRaw;\n  }\n} else {\n  channel = 'webhook';\n  content = input.message || input.content || JSON.stringify(input);\n  contact_name = input.body?.name || input.name || input.customer || 'Unknown';\n}\n\nreturn [{\n  json: {\n    channel,\n    contact_name,\n    content,\n    received_at: new Date().toISOString(),\n    raw: input\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        208,
+        0
+      ],
+      "id": "82da5ddf-4b63-4f2a-ba43-96a9423416eb",
+      "name": "Normalizer"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 3
+          },
+          "conditions": [
+            {
+              "id": "568034a7-14dd-479b-afba-3e063c686ee1",
+              "leftValue": "={{ $json.sentiment }}",
+              "rightValue": "schlecht",
+              "operator": {
+                "type": "string",
+                "operation": "equals",
+                "name": "filter.operator.equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.3,
+      "position": [
+        800,
+        0
+      ],
+      "id": "e884183d-ad2e-4f3e-96ca-51fafb17b20f",
+      "name": "Critical Check"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "https://httpbin.org/post",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\n  \"alert\": \"CRITICAL customer contact\",\n  \"channel\": \"{{ $json.channel }}\",\n  \"contact\": \"{{ $json.contact_name }}\",\n  \"sentiment\": \"{{ $json.sentiment }}\",\n  \"summary\": \"{{ $json.summary }}\",\n  \"received_at\": \"{{ $json.received_at }}\"\n}",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        960,
+        -240
+      ],
+      "id": "deea715f-62b1-4058-baa2-1bea999aabb4",
+      "name": "Alert"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "INSERT INTO customer_contacts \n  (channel, contact_name, content, summary, sentiment, has_todo, is_critical, received_at)\nVALUES \n  (\n    '{{ $node[\"Response Parser\"].json[\"channel\"] }}',\n    '{{ $node[\"Response Parser\"].json[\"contact_name\"] }}',\n    '{{ $node[\"Response Parser\"].json[\"content\"] }}',\n    '{{ $node[\"Response Parser\"].json[\"summary\"] }}',\n    '{{ $node[\"Response Parser\"].json[\"sentiment\"] }}',\n    {{ $node[\"Response Parser\"].json[\"has_todo\"] }},\n    {{ $node[\"Response Parser\"].json[\"is_critical\"] }},\n    '{{ $node[\"Response Parser\"].json[\"received_at\"] }}'\n  )",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1200,
+        0
+      ],
+      "id": "6996a6d2-6e67-4a6f-a339-b9ce716d7c08",
+      "name": "Execute a SQL query",
+      "credentials": {
+        "postgres": {
+          "id": "AonTjxx0IFey3kB7",
+          "name": "Moebelhaus PS"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const inputData = $input.first().json;\n\nlet parsed;\ntry {\n  const raw = inputData.response || inputData.text || '';\n  const cleaned = raw.replace(/```json|```/g, '').trim();\n  parsed = JSON.parse(cleaned);\n} catch (e) {\n  parsed = {\n    summary: 'Could not parse response',\n    sentiment: 'normal',\n    has_todo: false,\n    is_critical: false\n  };\n}\n\n// Walk back through previous nodes to find normalizer data\nconst normalizer = $node[\"Normalizer\"].json;\n\nreturn [{\n  json: {\n    channel: normalizer.channel || 'webhook',\n    contact_name: normalizer.contact_name || 'Unknown',\n    content: normalizer.content || '',\n    received_at: normalizer.received_at || new Date().toISOString(),\n    summary: parsed.summary || '',\n    sentiment: parsed.sentiment || 'normal',\n    has_todo: parsed.has_todo === true,\n    is_critical: parsed.is_critical === true\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        608,
+        0
+      ],
+      "id": "206fda4d-2ad4-4bd1-a2f0-6432fdcb25a7",
+      "name": "Response Parser"
+    },
+    {
+      "parameters": {
+        "jsCode": "const content = $input.first().json.content;\n\nconst response = await this.helpers.request({\n  method: 'POST',\n  url: 'http://ollama:11434/api/generate',\n  headers: {\n    'Content-Type': 'application/json'\n  },\n  body: JSON.stringify({\n    model: 'mistral',\n    stream: false,\n    prompt: `Du bist ein Kundenservice-Analyst für ein Möbelhaus. Analysiere den folgenden Kundenkontakt und antworte NUR mit einem gültigen JSON-Objekt, ohne Erklärung, ohne Markdown, ohne zusätzlichen Text.\n\nGib genau diese Struktur zurück:\n{\"summary\": \"2-3 Satz Zusammenfassung\", \"sentiment\": \"gut\", \"has_todo\": false, \"is_critical\": false}\n\nRegeln:\n- sentiment muss exakt eines sein: gut, normal, schlecht\n- has_todo ist true wenn der Kunde einen Rückruf oder eine Nachverfolgung benötigt\n- is_critical ist true wenn der Kunde sehr verärgert oder dringend ist\n- Antworte auf Deutsch\n\nKundenkontakt:\n${content}`\n  })\n});\n\nconst parsed = typeof response === 'string' ? JSON.parse(response) : response;\n\nreturn [{ json: { response: parsed.response } }];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "d641c79a-d7fc-47c5-8b4d-966d7ac0339e",
+      "name": "Ollama Analysis"
+    },
+    {
+      "parameters": {
+        "jsCode": "const input = $input.first().json;\n\nreturn [{\n  json: {\n    source: 'audio',\n    text: input.customer_text || input.speaker_00 || '',\n    speaker_00: input.speaker_00 || '',\n    speaker_01: input.speaker_01 || '',\n    full_text: input.full_text || ''\n  }\n}];"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        192,
+        -288
+      ],
+      "id": "45228c59-ef16-4b90-9299-e1968bacc45d",
+      "name": "Inject Source Type"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://pyannote:8001/diarize",
+        "sendBody": true,
+        "contentType": "multipart-form-data",
+        "bodyParameters": {
+          "parameters": [
+            {
+              "parameterType": "formBinaryData",
+              "name": "audio_file",
+              "inputDataFieldName": "data"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.4,
+      "position": [
+        -16,
+        -288
+      ],
+      "id": "81892a63-09b0-4cea-930b-10097ce44631",
+      "name": "Pyannote"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Normalizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Email Trigger (IMAP)": {
+      "main": [
+        [
+          {
+            "node": "Normalizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Audio Upload": {
+      "main": [
+        [
+          {
+            "node": "Pyannote",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalizer": {
+      "main": [
+        [
+          {
+            "node": "Ollama Analysis",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Critical Check": {
+      "main": [
+        [
+          {
+            "node": "Alert",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Alert": {
+      "main": [
+        [
+          {
+            "node": "Execute a SQL query",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Response Parser": {
+      "main": [
+        [
+          {
+            "node": "Critical Check",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Ollama Analysis": {
+      "main": [
+        [
+          {
+            "node": "Response Parser",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Inject Source Type": {
+      "main": [
+        [
+          {
+            "node": "Normalizer",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Pyannote": {
+      "main": [
+        [
+          {
+            "node": "Inject Source Type",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "binaryMode": "separate"
+  },
+  "versionId": "e3249a48-c214-410d-b9fd-ebdbb59d2455",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "dbd5b0590b4e7c43131994b435f6c1c38128a3c86ba78441deb9883fbe1921fe"
+  },
+  "id": "g9OamfRm1NOfpdAt",
+  "tags": []
+}
