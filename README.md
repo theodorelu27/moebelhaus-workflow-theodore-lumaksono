@@ -4,6 +4,14 @@ Ein selbst gehosteter n8n-Workflow, der Kundenkontakte aus verschiedenen Kanäle
 
 ---
 
+## Kontext
+Dieses Projekt entstand im Rahmen eines Take-Home-Assessments. Der n8n-Workflow 
+zentralisiert Kundenkontakte aus drei Kanälen (Webhook, E-Mail/IMAP und Audio) 
+und verarbeitet sie mit einem vollständig lokal betriebenen KI-Stack: Pyannote 
+übernimmt die Sprecher-Diarisierung und Transkription, Mistral 7B via Ollama 
+analysiert die Stimmung und erkennt kritische Fälle in Echtzeit. Alle Dienste 
+laufen selbst gehostet via Docker Compose – ohne externe API-Aufrufe.
+
 ## Architekturübersicht
 
 ```
